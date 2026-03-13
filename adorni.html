@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Rescate Presidencial - Boeing 737 Fijo</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #87CEEB; font-family: 'Segoe UI', Arial, sans-serif; }
+        canvas { display: block; }
+        #hud { position: absolute; top: 10px; width: 100%; text-align: center; font-size: 24px; font-weight: bold; color: white; text-shadow: 2px 2px 8px rgba(0,0,0,0.8); pointer-events: none; }
+        #msg { position: absolute; top: 45%; width: 100%; text-align: center; font-size: 36px; color: white; text-shadow: 3px 3px 12px black; font-weight: bold; pointer-events: none; }
+    </style>
+</head>
+<body>
+
+<div id="hud"></div>
+<div id="msg">Presiona una tecla para empezar</div>
+<canvas id="game"></canvas>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+const hud = document.getElementById("hud");
+const msg = document.getElementById("msg");
+
+let running = false;
+let gameOver = false;
+let level = 1;
+let delivered = 0;
+let time = 30;
+
+// --- GESTIÓN DE SPRITES ---
+const SPRITES = {
+    player: new Image(),
+    mama: new Image(),
+    papa: new Image(),
+    hermano: new Image(),
+    normal: new Image(),
+    enemigo1: new Image(),
+    enemigo2: new Image(),
+    enemigo3: new Image(),
+    avion: new Image()
+};
+
+// Rutas de archivos
+SPRITES.player.src = "sprite.png";
+SPRITES.mama.src = "mama.png";
+SPRITES.papa.src = "papa.png";
+SPRITES.hermano.src = "hermano.png";
+SPRITES.normal.src = "familiar_generico.png";
+SPRITES.enemigo1.src = "enemigo1.png";
+SPRITES.enemigo2.src = "enemigo2.png";
+SPRITES.enemigo3.src = "enemigo3.png";
+SPRITES.avion.src = "avion_737.png"; 
+
+const FRAME_W = 256;
+const FRAME_H = 256;
+
+const ANIM = {
+    idle: 0,
+    down: 1,
+    up: 2,
+    left: 3,
+    right: 4
+};
+
+let player = {
+    x: canvas.width / 2, y: canvas.height / 2,
+    w: 90, h: 90, frame: 0, row: ANIM.idle, frameTimer: 0, speed: 5, img: SPRITES.player
+};
+
+let plane = { 
+    x: 50, y: 50, 
+    w: 220, h: 220, 
+    frame: 0, 
+    row: ANIM.right, 
+    frameTimer: 0, 
+    img: SPRITES.avion,
+    isTakingOff: false 
+};
+
+let relatives = [];
+let followers = [];
+let enemies = [];
+let keys = {};
+
+document.addEventListener("keydown", e => { 
+    if (!running && !gameOver) { running = true; msg.innerHTML = ""; }
+    if (gameOver) reset();
+    keys[e.key] = true; 
+});
+document.addEventListener("keyup", e => { keys[e.key] = false; });
+
+// --- LÓGICA DE SPAWN DEL AVIÓN ---
+function spawnPlane() {
+    plane.isTakingOff = false;
+    // Se decide aleatoriamente solo al aparecer
+    plane.row = Math.random() < 0.5 ? ANIM.left : ANIM.right;
+    plane.x = Math.random() * (canvas.width - 300) + 50;
+    plane.y = Math.random() * (canvas.height - 300) + 50;
+}
+
+function spawnRelatives() {
+    relatives = [];
+    const types = ["mama", "papa", "hermano", "normal"];
+    for (let i = 0; i < 8; i++) {
+        let type = i < 3 ? types[i] : types[3];
+        relatives.push({
+            x: Math.random() * (canvas.width - 120) + 60,
+            y: Math.random() * (canvas.height - 120) + 60,
+            w: 80, h: 80, type: type, img: SPRITES[type],
+            taken: false, frame: 0, row: ANIM.idle, frameTimer: 0
+        });
+    }
+}
+
+function spawnEnemies() {
+    enemies = [];
+    for (let i = 1; i <= 3; i++) {
+        enemies.push({
+            x: i % 2 === 0 ? -100 : canvas.width + 100,
+            y: Math.random() * canvas.height,
+            w: 90, h: 90, speed: 1.3 + (level * 0.3), 
+            frame: 0, row: ANIM.down, frameTimer: 0,
+            img: SPRITES[`enemigo${i}`]
+        });
+    }
+}
+
+function update() {
+    if (!running || gameOver) return;
+
+    // Secuencia de despegue
+    if (plane.isTakingOff) {
+        plane.y -= 8; // Ascenso vertical
+        plane.frameTimer++;
+        if(plane.frameTimer > 5) {
+            plane.frame = (plane.frame + 1) % 4;
+            plane.frameTimer = 0;
+        }
+        if (plane.y < -plane.h) nextLevel();
+        return; 
+    }
+
+    // Movimiento del jugador
+    let currentSpeed = Math.max(2.5, player.speed - (followers.length * 0.12));
+    let moving = false;
+    let nextRow = player.row;
+
+    if (keys["ArrowLeft"]) { player.x -= currentSpeed; nextRow = ANIM.left; moving = true; }
+    else if (keys["ArrowRight"]) { player.x += currentSpeed; nextRow = ANIM.right; moving = true; }
+    if (keys["ArrowUp"]) { player.y -= currentSpeed; nextRow = ANIM.up; moving = true; }
+    else if (keys["ArrowDown"]) { player.y += currentSpeed; nextRow = ANIM.down; moving = true; }
+    
+    if (moving) {
+        player.row = nextRow;
+        player.frameTimer++;
+        if (player.frameTimer > 7) {
+            player.frame = (player.frame + 1) % 4;
+            player.frameTimer = 0;
+        }
+    } else {
+        player.row = ANIM.idle;
+        player.frame = 0;
+    }
+
+    player.x = Math.max(0, Math.min(canvas.width - player.w, player.x));
+    player.y = Math.max(0, Math.min(canvas.height - player.h, player.y));
+
+    // Animación constante de turbinas
+    plane.frameTimer++;
+    if(plane.frameTimer > 6) {
+        plane.frame = (plane.frame + 1) % 4;
+        plane.frameTimer = 0;
+    }
+
+    // Colisión y Seguidores
+    relatives.forEach(r => {
+        if (!r.taken && Math.hypot(player.x - r.x, player.y - r.y) < 65) {
+            r.taken = true;
+            followers.push(r);
+        }
+    });
+
+    followers.forEach((f, i) => {
+        let target = i === 0 ? player : followers[i - 1];
+        let dx = target.x - f.x, dy = target.y - f.y, dist = Math.hypot(dx, dy);
+        if (dist > 50) {
+            f.x += dx * 0.12; f.y += dy * 0.12;
+            if (Math.abs(dx) > Math.abs(dy)) f.row = (dx > 0) ? ANIM.right : ANIM.left;
+            else f.row = (dy > 0) ? ANIM.down : ANIM.up;
+            f.frameTimer++;
+            if (f.frameTimer > 7) { f.frame = (f.frame + 1) % 4; f.frameTimer = 0; }
+        } else if (!moving || dist < 25) { f.row = ANIM.idle; f.frame = 0; }
+    });
+
+    // Enemigos
+    enemies.forEach((e1, i) => {
+        let dx = player.x - e1.x, dy = player.y - e1.y, dist = Math.hypot(dx, dy);
+        e1.x += (dx / dist) * e1.speed; e1.y += (dy / dist) * e1.speed;
+        enemies.forEach((e2, j) => {
+            if (i !== j) {
+                let ex = e1.x - e2.x, ey = e1.y - e2.y, edist = Math.hypot(ex, ey);
+                if (edist < 75) { e1.x += (ex / edist) * 2; e1.y += (ey / edist) * 2; }
+            }
+        });
+        e1.row = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? ANIM.right : ANIM.left) : (dy > 0 ? ANIM.down : ANIM.up);
+        e1.frameTimer++;
+        if(e1.frameTimer > 8) { e1.frame = (e1.frame + 1) % 4; e1.frameTimer = 0; }
+        if (dist < 45) die();
+    });
+
+    // Entrega y Rondas
+    if (Math.hypot(player.x - plane.x, player.y - plane.y) < 110 && followers.length > 0) {
+        followers.shift(); delivered++; time += 4;
+    }
+
+    // Activar despegue cuando no quedan familiares
+    if (relatives.every(r => r.taken) && followers.length === 0 && !plane.isTakingOff) {
+        plane.isTakingOff = true;
+        plane.row = ANIM.up; // Fila de ascenso
+        msg.innerHTML = "¡PASAJEROS A BORDO! DESPEGANDO...";
+    }
+
+    time -= 1/60;
+    if (time <= 0) die();
+    hud.innerHTML = `Nivel: ${level} | Tiempo: ${Math.max(0, Math.floor(time))} | Rescatados: ${delivered} | Fila: ${followers.length}`;
+}
+
+function nextLevel() {
+    level++; time += 20;
+    spawnPlane(); spawnRelatives(); spawnEnemies();
+    msg.innerHTML = "¡NIVEL " + level + "!";
+    setTimeout(() => { if(!gameOver) msg.innerHTML = ""; }, 2000);
+}
+
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    drawEntity(plane);
+    relatives.forEach(r => { if (!r.taken) drawEntity(r); });
+    followers.forEach(f => drawEntity(f));
+    enemies.forEach(e => drawEntity(e));
+    drawEntity(player);
+}
+
+function drawEntity(ent) {
+    if (!ent.img.complete) return;
+    ctx.drawImage(ent.img, ent.frame * FRAME_W, ent.row * FRAME_H, FRAME_W, FRAME_H, ent.x, ent.y, ent.w, ent.h);
+}
+
+function die() { running = false; gameOver = true; msg.innerHTML = "GAME OVER <br> Pulsa una tecla."; }
+
+function reset() {
+    level = 1; time = 30; delivered = 0; followers = [];
+    player.x = canvas.width/2; player.y = canvas.height/2;
+    spawnPlane(); spawnRelatives(); spawnEnemies();
+    running = false; gameOver = false; msg.innerHTML = "";
+}
+
+function loop() { update(); draw(); requestAnimationFrame(loop); }
+spawnPlane(); spawnRelatives(); spawnEnemies();
+loop();
+</script>
+</body>
+</html>
