@@ -2,18 +2,20 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <title>Rescate Presidencial - Boeing 737 Fijo</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Rescate Presidencial - Boeing 737 Móvil</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #87CEEB; font-family: 'Segoe UI', Arial, sans-serif; }
+        body { margin: 0; overflow: hidden; background: #87CEEB; font-family: 'Segoe UI', Arial, sans-serif; touch-action: none; }
         canvas { display: block; }
-        #hud { position: absolute; top: 10px; width: 100%; text-align: center; font-size: 24px; font-weight: bold; color: white; text-shadow: 2px 2px 8px rgba(0,0,0,0.8); pointer-events: none; }
-        #msg { position: absolute; top: 45%; width: 100%; text-align: center; font-size: 36px; color: white; text-shadow: 3px 3px 12px black; font-weight: bold; pointer-events: none; }
+        /* HUD más grande para móviles */
+        #hud { position: absolute; top: 15px; width: 100%; text-align: center; font-size: 20px; font-weight: bold; color: white; text-shadow: 2px 2px 8px rgba(0,0,0,0.8); pointer-events: none; }
+        #msg { position: absolute; top: 40%; width: 100%; text-align: center; font-size: 28px; color: white; text-shadow: 3px 3px 12px black; font-weight: bold; pointer-events: none; padding: 0 20px; box-sizing: border-box; }
     </style>
 </head>
 <body>
 
 <div id="hud"></div>
-<div id="msg">Presiona una tecla para empezar</div>
+<div id="msg">Toca la pantalla para empezar</div>
 <canvas id="game"></canvas>
 
 <script>
@@ -30,21 +32,19 @@ let gameOver = false;
 let level = 1;
 let delivered = 0;
 let time = 30;
+let deliveryTimer = 0; 
+
+// --- GESTIÓN DE AUDIO ---
+const bgMusic = new Audio('https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3'); 
+bgMusic.loop = true;
 
 // --- GESTIÓN DE SPRITES ---
 const SPRITES = {
-    player: new Image(),
-    mama: new Image(),
-    papa: new Image(),
-    hermano: new Image(),
-    normal: new Image(),
-    enemigo1: new Image(),
-    enemigo2: new Image(),
-    enemigo3: new Image(),
+    player: new Image(), mama: new Image(), papa: new Image(), hermano: new Image(),
+    normal: new Image(), enemigo1: new Image(), enemigo2: new Image(), enemigo3: new Image(),
     avion: new Image()
 };
 
-// Rutas de archivos
 SPRITES.player.src = "sprite.png";
 SPRITES.mama.src = "mama.png";
 SPRITES.papa.src = "papa.png";
@@ -57,184 +57,167 @@ SPRITES.avion.src = "avion_737.png";
 
 const FRAME_W = 256;
 const FRAME_H = 256;
+const ANIM = { idle: 0, down: 1, up: 2, left: 3, right: 4 };
 
-const ANIM = {
-    idle: 0,
-    down: 1,
-    up: 2,
-    left: 3,
-    right: 4
-};
-
-let player = {
-    x: canvas.width / 2, y: canvas.height / 2,
-    w: 90, h: 90, frame: 0, row: ANIM.idle, frameTimer: 0, speed: 5, img: SPRITES.player
-};
-
-let plane = { 
-    x: 50, y: 50, 
-    w: 220, h: 220, 
-    frame: 0, 
-    row: ANIM.right, 
-    frameTimer: 0, 
-    img: SPRITES.avion,
-    isTakingOff: false 
-};
+let player = { x: canvas.width / 2, y: canvas.height / 2, w: 80, h: 80, frame: 0, row: ANIM.idle, frameTimer: 0, speed: 5, img: SPRITES.player };
+let plane = { x: 50, y: 50, w: 200, h: 200, frame: 0, row: ANIM.right, frameTimer: 0, img: SPRITES.avion, isTakingOff: false };
 
 let relatives = [];
 let followers = [];
 let enemies = [];
 let keys = {};
 
-document.addEventListener("keydown", e => { 
+// --- CONTROL MÓVIL ---
+let joystick = { active: false, startX: 0, startY: 0 };
+function handleInputStart(x, y) {
     if (!running && !gameOver) { running = true; msg.innerHTML = ""; }
     if (gameOver) reset();
-    keys[e.key] = true; 
-});
+    joystick.active = true;
+    joystick.startX = x;
+    joystick.startY = y;
+}
+function handleInputMove(x, y) {
+    if (!joystick.active) return;
+    let dx = x - joystick.startX, dy = y - joystick.startY;
+    keys["ArrowLeft"] = dx < -20; keys["ArrowRight"] = dx > 20;
+    keys["ArrowUp"] = dy < -20; keys["ArrowDown"] = dy > 20;
+}
+canvas.addEventListener("touchstart", e => { handleInputStart(e.touches[0].clientX, e.touches[0].clientY); e.preventDefault(); }, {passive: false});
+canvas.addEventListener("touchmove", e => { handleInputMove(e.touches[0].clientX, e.touches[0].clientY); e.preventDefault(); }, {passive: false});
+canvas.addEventListener("touchend", () => { joystick.active = false; keys = {}; });
+document.addEventListener("keydown", e => { handleInputStart(0,0); keys[e.key] = true; });
 document.addEventListener("keyup", e => { keys[e.key] = false; });
 
-// --- LÓGICA DE SPAWN DEL AVIÓN ---
 function spawnPlane() {
     plane.isTakingOff = false;
-    // Se decide aleatoriamente solo al aparecer
     plane.row = Math.random() < 0.5 ? ANIM.left : ANIM.right;
-    plane.x = Math.random() * (canvas.width - 300) + 50;
-    plane.y = Math.random() * (canvas.height - 300) + 50;
+    plane.x = Math.random() * (canvas.width - 250) + 50;
+    plane.y = Math.random() * (canvas.height - 250) + 50;
 }
 
 function spawnRelatives() {
     relatives = [];
     const types = ["mama", "papa", "hermano", "normal"];
-    for (let i = 0; i < 8; i++) {
+    let total = 5 + Math.floor(level / 2);
+    for (let i = 0; i < total; i++) {
         let type = i < 3 ? types[i] : types[3];
-        relatives.push({
-            x: Math.random() * (canvas.width - 120) + 60,
-            y: Math.random() * (canvas.height - 120) + 60,
-            w: 80, h: 80, type: type, img: SPRITES[type],
-            taken: false, frame: 0, row: ANIM.idle, frameTimer: 0
+        relatives.push({ 
+            x: Math.random() * (canvas.width - 100) + 50, 
+            y: Math.random() * (canvas.height - 100) + 50, 
+            w: 70, h: 70, type, img: SPRITES[type], 
+            taken: false, frame: 0, row: ANIM.idle, frameTimer: 0,
+            vx: (Math.random() - 0.5) * 1.5, vy: (Math.random() - 0.5) * 1.5, // Movimiento libre
+            changeDirTimer: Math.random() * 100 
         });
     }
 }
 
 function spawnEnemies() {
     enemies = [];
-    for (let i = 1; i <= 3; i++) {
-        enemies.push({
-            x: i % 2 === 0 ? -100 : canvas.width + 100,
-            y: Math.random() * canvas.height,
-            w: 90, h: 90, speed: 1.3 + (level * 0.3), 
-            frame: 0, row: ANIM.down, frameTimer: 0,
-            img: SPRITES[`enemigo${i}`]
-        });
+    const styles = ["chaser", "predictor", "flanker"];
+    for (let i = 0; i < 3; i++) {
+        enemies.push({ x: i % 2 === 0 ? -100 : canvas.width + 100, y: Math.random() * canvas.height, w: 80, h: 80, baseSpeed: 1.1 + (level * 0.2), currentSpeed: 0, frame: 0, row: ANIM.down, frameTimer: 0, img: SPRITES[`enemigo${i+1}`], style: styles[i] });
     }
 }
 
 function update() {
     if (!running || gameOver) return;
 
-    // Secuencia de despegue
+    if (bgMusic.paused) bgMusic.play().catch(() => {});
+    let minD = 1000;
+    enemies.forEach(e => { let d = Math.hypot(player.x - e.x, player.y - e.y); if (d < minD) minD = d; });
+    let vol = 0.2 + (0.8 * (1 - Math.min(1, Math.max(0, (minD - 50) / 350))));
+    bgMusic.volume = bgMusic.volume + (vol - bgMusic.volume) * 0.1;
+
     if (plane.isTakingOff) {
-        plane.y -= 8; // Ascenso vertical
+        plane.y -= 8;
         plane.frameTimer++;
-        if(plane.frameTimer > 5) {
-            plane.frame = (plane.frame + 1) % 4;
-            plane.frameTimer = 0;
-        }
+        if(plane.frameTimer > 5) { plane.frame = (plane.frame + 1) % 4; plane.frameTimer = 0; }
         if (plane.y < -plane.h) nextLevel();
         return; 
     }
 
-    // Movimiento del jugador
-    let currentSpeed = Math.max(2.5, player.speed - (followers.length * 0.12));
-    let moving = false;
-    let nextRow = player.row;
-
-    if (keys["ArrowLeft"]) { player.x -= currentSpeed; nextRow = ANIM.left; moving = true; }
-    else if (keys["ArrowRight"]) { player.x += currentSpeed; nextRow = ANIM.right; moving = true; }
-    if (keys["ArrowUp"]) { player.y -= currentSpeed; nextRow = ANIM.up; moving = true; }
-    else if (keys["ArrowDown"]) { player.y += currentSpeed; nextRow = ANIM.down; moving = true; }
+    let speed = Math.max(1.5, player.speed - (followers.length * 0.4));
+    let moving = false, nextRow = player.row;
+    if (keys["ArrowLeft"]) { player.x -= speed; nextRow = ANIM.left; moving = true; }
+    else if (keys["ArrowRight"]) { player.x += speed; nextRow = ANIM.right; moving = true; }
+    if (keys["ArrowUp"]) { player.y -= speed; nextRow = ANIM.up; moving = true; }
+    else if (keys["ArrowDown"]) { player.y += speed; nextRow = ANIM.down; moving = true; }
     
-    if (moving) {
-        player.row = nextRow;
-        player.frameTimer++;
-        if (player.frameTimer > 7) {
-            player.frame = (player.frame + 1) % 4;
-            player.frameTimer = 0;
-        }
-    } else {
-        player.row = ANIM.idle;
-        player.frame = 0;
-    }
-
+    player.row = moving ? nextRow : ANIM.idle;
+    player.frameTimer++;
+    if (player.frameTimer > 8) { player.frame = (player.frame + 1) % 4; player.frameTimer = 0; }
     player.x = Math.max(0, Math.min(canvas.width - player.w, player.x));
     player.y = Math.max(0, Math.min(canvas.height - player.h, player.y));
 
-    // Animación constante de turbinas
     plane.frameTimer++;
-    if(plane.frameTimer > 6) {
-        plane.frame = (plane.frame + 1) % 4;
-        plane.frameTimer = 0;
-    }
+    if(plane.frameTimer > 6) { plane.frame = (plane.frame + 1) % 4; plane.frameTimer = 0; }
 
-    // Colisión y Seguidores
+    // Familiares Libres
     relatives.forEach(r => {
-        if (!r.taken && Math.hypot(player.x - r.x, player.y - r.y) < 65) {
-            r.taken = true;
-            followers.push(r);
+        if (!r.taken) {
+            r.x += r.vx; r.y += r.vy;
+            if (r.x < 0 || r.x > canvas.width - r.w) r.vx *= -1;
+            if (r.y < 0 || r.y > canvas.height - r.h) r.vy *= -1;
+            r.changeDirTimer--;
+            if (r.changeDirTimer <= 0) { r.vx = (Math.random() - 0.5) * 1.5; r.vy = (Math.random() - 0.5) * 1.5; r.changeDirTimer = 100 + Math.random() * 200; }
+            r.row = Math.abs(r.vx) > Math.abs(r.vy) ? (r.vx > 0 ? ANIM.right : ANIM.left) : (r.vy > 0 ? ANIM.down : ANIM.up);
+            r.frameTimer++; if (r.frameTimer > 12) { r.frame = (r.frame + 1) % 4; r.frameTimer = 0; }
+            if (Math.hypot(player.x - r.x, player.y - r.y) < 60) { r.taken = true; followers.push(r); }
         }
     });
 
+    // Fila de Seguidores
     followers.forEach((f, i) => {
         let target = i === 0 ? player : followers[i - 1];
         let dx = target.x - f.x, dy = target.y - f.y, dist = Math.hypot(dx, dy);
         if (dist > 50) {
             f.x += dx * 0.12; f.y += dy * 0.12;
-            if (Math.abs(dx) > Math.abs(dy)) f.row = (dx > 0) ? ANIM.right : ANIM.left;
-            else f.row = (dy > 0) ? ANIM.down : ANIM.up;
-            f.frameTimer++;
-            if (f.frameTimer > 7) { f.frame = (f.frame + 1) % 4; f.frameTimer = 0; }
-        } else if (!moving || dist < 25) { f.row = ANIM.idle; f.frame = 0; }
+            f.row = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? ANIM.right : ANIM.left) : (dy > 0 ? ANIM.down : ANIM.up);
+        } else { f.row = ANIM.idle; }
+        f.frameTimer++; if (f.frameTimer > 10) { f.frame = (f.frame + 1) % 4; f.frameTimer = 0; }
     });
 
-    // Enemigos
-    enemies.forEach((e1, i) => {
-        let dx = player.x - e1.x, dy = player.y - e1.y, dist = Math.hypot(dx, dy);
-        e1.x += (dx / dist) * e1.speed; e1.y += (dy / dist) * e1.speed;
-        enemies.forEach((e2, j) => {
+    // Enemigos IA
+    enemies.forEach((e, i) => {
+        let maxS = e.baseSpeed + (followers.length * 0.1);
+        if (e.currentSpeed < maxS) e.currentSpeed += 0.01;
+        let tX = player.x, tY = player.y;
+        if (e.style === "predictor") {
+            if (keys["ArrowLeft"]) tX -= 60; if (keys["ArrowRight"]) tX += 70;
+            if (keys["ArrowUp"]) tY -= 60; if (keys["ArrowDown"]) tY += 70;
+        } else if (e.style === "flanker") {
+            tX += Math.cos(level + i) * 80; tY += Math.sin(level + i) * 80;
+        }
+        let dx = tX - e.x, dy = tY - e.y, distT = Math.hypot(dx, dy);
+        if (distT > 1) { e.x += (dx / distT) * e.currentSpeed; e.y += (dy / distT) * e.currentSpeed; }
+        enemies.forEach((other, j) => {
             if (i !== j) {
-                let ex = e1.x - e2.x, ey = e1.y - e2.y, edist = Math.hypot(ex, ey);
-                if (edist < 75) { e1.x += (ex / edist) * 2; e1.y += (ey / edist) * 2; }
+                let ox = e.x - other.x, oy = e.y - other.y, od = Math.hypot(ox, oy);
+                if (od < 80) { e.x += (ox / od) * 1.2; e.y += (oy / od) * 1.2; }
             }
         });
-        e1.row = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? ANIM.right : ANIM.left) : (dy > 0 ? ANIM.down : ANIM.up);
-        e1.frameTimer++;
-        if(e1.frameTimer > 8) { e1.frame = (e1.frame + 1) % 4; e1.frameTimer = 0; }
-        if (dist < 45) die();
+        e.row = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? ANIM.right : ANIM.left) : (dy > 0 ? ANIM.down : ANIM.up);
+        e.frameTimer++; if(e.frameTimer > 8) { e.frame = (e.frame + 1) % 4; e.frameTimer = 0; }
+        if (Math.hypot(player.x - e.x, player.y - e.y) < 40) die();
     });
 
-    // Entrega y Rondas
-    if (Math.hypot(player.x - plane.x, player.y - plane.y) < 110 && followers.length > 0) {
-        followers.shift(); delivered++; time += 4;
-    }
+    // Entrega
+    if (Math.hypot(player.x - plane.x, player.y - plane.y) < 100 && followers.length > 0) {
+        deliveryTimer++;
+        if (deliveryTimer > 15) { followers.shift(); delivered++; time += 4; deliveryTimer = 0; }
+    } else { deliveryTimer = 0; }
 
-    // Activar despegue cuando no quedan familiares
     if (relatives.every(r => r.taken) && followers.length === 0 && !plane.isTakingOff) {
-        plane.isTakingOff = true;
-        plane.row = ANIM.up; // Fila de ascenso
-        msg.innerHTML = "¡PASAJEROS A BORDO! DESPEGANDO...";
+        plane.isTakingOff = true; plane.row = ANIM.up; msg.innerHTML = "¡DESPEGANDO!";
     }
 
     time -= 1/60;
     if (time <= 0) die();
-    hud.innerHTML = `Nivel: ${level} | Tiempo: ${Math.max(0, Math.floor(time))} | Rescatados: ${delivered} | Fila: ${followers.length}`;
+    hud.innerHTML = `Lvl: ${level} | T: ${Math.max(0, Math.floor(time))} | Rescatados: ${delivered}`;
 }
 
-function nextLevel() {
-    level++; time += 20;
-    spawnPlane(); spawnRelatives(); spawnEnemies();
-    msg.innerHTML = "¡NIVEL " + level + "!";
-    setTimeout(() => { if(!gameOver) msg.innerHTML = ""; }, 2000);
-}
+function nextLevel() { level++; time += 20; spawnPlane(); spawnRelatives(); spawnEnemies(); msg.innerHTML = "NIVEL " + level; setTimeout(() => { if(!gameOver) msg.innerHTML = ""; }, 2000); }
 
 function draw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -245,19 +228,11 @@ function draw() {
     drawEntity(player);
 }
 
-function drawEntity(ent) {
-    if (!ent.img.complete) return;
-    ctx.drawImage(ent.img, ent.frame * FRAME_W, ent.row * FRAME_H, FRAME_W, FRAME_H, ent.x, ent.y, ent.w, ent.h);
-}
+function drawEntity(ent) { if (ent.img.complete) ctx.drawImage(ent.img, ent.frame * FRAME_W, ent.row * FRAME_H, FRAME_W, FRAME_H, ent.x, ent.y, ent.w, ent.h); }
 
-function die() { running = false; gameOver = true; msg.innerHTML = "GAME OVER <br> Pulsa una tecla."; }
+function die() { running = false; gameOver = true; bgMusic.pause(); bgMusic.currentTime = 0; msg.innerHTML = "GAME OVER<br>Toca para reintentar"; }
 
-function reset() {
-    level = 1; time = 30; delivered = 0; followers = [];
-    player.x = canvas.width/2; player.y = canvas.height/2;
-    spawnPlane(); spawnRelatives(); spawnEnemies();
-    running = false; gameOver = false; msg.innerHTML = "";
-}
+function reset() { level = 1; time = 30; delivered = 0; followers = []; player.x = canvas.width/2; player.y = canvas.height/2; spawnPlane(); spawnRelatives(); spawnEnemies(); running = false; gameOver = false; msg.innerHTML = ""; }
 
 function loop() { update(); draw(); requestAnimationFrame(loop); }
 spawnPlane(); spawnRelatives(); spawnEnemies();
